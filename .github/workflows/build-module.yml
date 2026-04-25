@@ -2,6 +2,23 @@ name: Build KernelSU module
 
 on:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Create a GitHub Release after building"
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag to create when create_release is true"
+        required: false
+        type: string
+        default: "v1.0-op5d0dl1"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -32,3 +49,17 @@ jobs:
           name: hideSceneport_module
           path: ../hideSceneport_module.zip
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') || inputs.create_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Scene Port Hider by eBPF ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          body: |
+            KernelSU module built by GitHub Actions.
+
+            This package is tied to the target kernel BTF committed in this repository.
+            For other devices or kernels, fork the repository and rebuild with that device's BTF.
+          files: ../hideSceneport_module.zip
