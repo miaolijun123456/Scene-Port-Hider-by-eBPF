@@ -42,12 +42,25 @@ fi
 
 log_msg "Successfully extracted valid UID: $SCENE_UID. Starting iptables daemon loop..."
 
+# Boot fast-loop phase (check every 2s for the first 2 minutes)
+BOOT_START_TIME=$(date +%s)
+FAST_LOOP_DURATION=120
+
 while true; do
+    NEED_REAPPLY=false
     for PORT in $PORTS; do
-        # Check if our REJECT rule is still at the top or exists
-        if ! iptables -C OUTPUT -p tcp --dport $PORT -j REJECT --reject-with tcp-reset >/dev/null 2>&1; then
-            log_msg "Rules for port $PORT missing or incomplete. Re-applying..."
-            
+        # Check if BOTH the first ACCEPT rule (UID 0) AND the REJECT rule exist
+        # This is more robust than just checking REJECT.
+        if ! iptables -C OUTPUT -p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT >/dev/null 2>&1 || \
+           ! iptables -C OUTPUT -p tcp --dport $PORT -j REJECT --reject-with tcp-reset >/dev/null 2>&1; then
+            NEED_REAPPLY=true
+            break
+        fi
+    done
+
+    if [ "$NEED_REAPPLY" = "true" ]; then
+        log_msg "Iptables rules missing or incomplete. Re-applying for all ports: $PORTS"
+        for PORT in $PORTS; do
             for cmd in iptables ip6tables; do
                 # Cleanup old rules
                 for iface in "-o lo " ""; do
@@ -63,10 +76,17 @@ while true; do
                 $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 2000 -j ACCEPT
                 $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT
             done
-            log_msg "Port $PORT blocked successfully."
-        fi
-    done
+        done
+        log_msg "Rules re-applied successfully."
+    fi
+
+    # Determine sleep interval
+    CURRENT_TIME=$(date +%s)
+    ELAPSED=$((CURRENT_TIME - BOOT_START_TIME))
     
-    # Check every 15 seconds to ensure rules survive netd flushes or VPN state changes
-    sleep 15
+    if [ $ELAPSED -lt $FAST_LOOP_DURATION ]; then
+        sleep 2
+    else
+        sleep 15
+    fi
 done
