@@ -40,26 +40,33 @@ if [ -z "$SCENE_UID" ] || ! echo "$SCENE_UID" | grep -qE '^[0-9]+$'; then
     exit 1
 fi
 
-log_msg "Successfully extracted valid UID: $SCENE_UID. Applying iptables rules..."
+log_msg "Successfully extracted valid UID: $SCENE_UID. Starting iptables daemon loop..."
 
-for PORT in $PORTS; do
-    for cmd in iptables ip6tables; do
-        for iface in "-o lo " ""; do
-            while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT 2>/dev/null; do :; done
-            while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner 2000 -j ACCEPT 2>/dev/null; do :; done
-            while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner $SCENE_UID -j ACCEPT 2>/dev/null; do :; done
-            while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -j REJECT --reject-with tcp-reset 2>/dev/null; do :; done
-        done
+while true; do
+    for PORT in $PORTS; do
+        # Check if our REJECT rule is still at the top or exists
+        if ! iptables -C OUTPUT -p tcp --dport $PORT -j REJECT --reject-with tcp-reset >/dev/null 2>&1; then
+            log_msg "Rules for port $PORT missing or incomplete. Re-applying..."
+            
+            for cmd in iptables ip6tables; do
+                # Cleanup old rules
+                for iface in "-o lo " ""; do
+                    while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT 2>/dev/null; do :; done
+                    while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner 2000 -j ACCEPT 2>/dev/null; do :; done
+                    while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -m owner --uid-owner $SCENE_UID -j ACCEPT 2>/dev/null; do :; done
+                    while $cmd -D OUTPUT ${iface}-p tcp --dport $PORT -j REJECT --reject-with tcp-reset 2>/dev/null; do :; done
+                done
+                
+                # Insert rules (in reverse order so they appear correctly at the top)
+                $cmd -I OUTPUT 1 -p tcp --dport $PORT -j REJECT --reject-with tcp-reset
+                $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner $SCENE_UID -j ACCEPT
+                $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 2000 -j ACCEPT
+                $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT
+            done
+            log_msg "Port $PORT blocked successfully."
+        fi
     done
+    
+    # Check every 15 seconds to ensure rules survive netd flushes or VPN state changes
+    sleep 15
 done
-
-for PORT in $PORTS; do
-    for cmd in iptables ip6tables; do
-        $cmd -I OUTPUT 1 -p tcp --dport $PORT -j REJECT --reject-with tcp-reset
-        $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner $SCENE_UID -j ACCEPT
-        $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 2000 -j ACCEPT
-        $cmd -I OUTPUT 1 -p tcp --dport $PORT -m owner --uid-owner 0 -j ACCEPT
-    done
-done
-
-log_msg "Port hiding applied successfully. Ports $PORTS are blocked for unauthorized apps across all interfaces."
