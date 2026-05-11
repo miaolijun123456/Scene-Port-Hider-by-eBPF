@@ -98,5 +98,4 @@ Done:
 Install this zip in KernelSU Manager, then reboot.
 Logs on device:
   /data/adb/modules/hideSceneport/hideport.log
-  /data/adb/modules/hideSceneport/hide_scene.log
 EOF

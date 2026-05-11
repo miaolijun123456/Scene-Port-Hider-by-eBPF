@@ -45,7 +45,6 @@ fi
         hideport_start.sh
         customize.sh
         uninstall.sh
-        service.d
         system
     )
     if [[ -f kernel_btf.sha256 ]]; then
